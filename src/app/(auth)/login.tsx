@@ -1,12 +1,12 @@
 import { useTheme } from "@/src/context/ThemeContext";
-import { getThemeColors, Colors, Fonts, FontSizes, Spacing, BorderRadius } from "@/src/style/theme";
+import { getThemeColors, Colors, Fonts, FontSizes, Spacing } from "@/src/style/theme";
 import ErrorMessage from "@design/Alert/ErrorMessage";
 import Button from "@design/Button/Button";
 import Logo from "@design/Logo/Logo";
 import { translateError, validateLogin } from "@functional/auth/authValidation";
 import useAuth from "@functional/auth/useAuth";
 import { authStyles } from "@style/auth.styling";
-import { Link, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { useState } from "react";
 import { KeyboardAvoidingView, Platform, Text, TextInput, View } from "react-native";
 

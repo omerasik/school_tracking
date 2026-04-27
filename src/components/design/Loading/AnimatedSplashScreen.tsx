@@ -46,7 +46,7 @@ const AnimatedSplashScreen: React.FC = () => {
         }),
       ]),
     ]).start();
-  }, []);
+  }, [fadeAnim, rotateAnim, scaleAnim]);
 
   const spin = rotateAnim.interpolate({
     inputRange: [0, 1],

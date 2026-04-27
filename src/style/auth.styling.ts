@@ -1,4 +1,4 @@
-import { Colors, FontSizes, Fonts, Spacing, BorderRadius, Shadow } from "@style/theme";
+import { Colors, FontSizes, Fonts, Spacing, BorderRadius } from "@style/theme";
 import { StyleSheet } from "react-native";
 
 export const authStyles = StyleSheet.create({

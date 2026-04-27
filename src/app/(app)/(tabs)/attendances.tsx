@@ -28,12 +28,11 @@ import {
 } from "react-native";
 
 type FilterStatus = "all" | "present" | "absent";
-
-const ALLOWED_COURSES = [
-  "Agile Skills",
-  "Programming 6: Mobile",
-  "@Work 3: Multidisciplinary Web Projects",
-];
+type FilterChip = {
+  key: FilterStatus;
+  label: string;
+  activeStyle?: ViewStyle;
+};
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const toMinutes = (t: string) => {
@@ -280,10 +279,10 @@ const DocentDashboard = () => {
       {/* ── FILTER CHIPS ── */}
       <View style={attandancesStyles.filterContainer}>
         {([
-          { key: "all" as FilterStatus, label: `Alle (${filteredAttendances.length})` },
-          { key: "present" as FilterStatus, label: `Aanwezig (${presentCount})`, activeStyle: attandancesStyles.filterButtonPresent },
-          { key: "absent" as FilterStatus, label: `Afwezig (${absentCount})`, activeStyle: attandancesStyles.filterButtonAbsent },
-        ] as const).map(({ key, label, activeStyle }) => (
+          { key: "all", label: `Alle (${filteredAttendances.length})` },
+          { key: "present", label: `Aanwezig (${presentCount})`, activeStyle: attandancesStyles.filterButtonPresent },
+          { key: "absent", label: `Afwezig (${absentCount})`, activeStyle: attandancesStyles.filterButtonAbsent },
+        ] satisfies FilterChip[]).map(({ key, label, activeStyle }) => (
           <TouchableOpacity
             key={key}
             style={[attandancesStyles.filterButton, cardStyle, filterStatus === key && attandancesStyles.filterButtonActive, filterStatus === key && activeStyle]}
@@ -455,10 +454,10 @@ const StudentView = () => {
       {/* Filters */}
       <View style={attandancesStyles.filterContainer}>
         {([
-          { key: "all" as FilterStatus, label: `Alle (${courses.length})` },
-          { key: "present" as FilterStatus, label: `Aanwezig (${present})`, activeStyle: attandancesStyles.filterButtonPresent },
-          { key: "absent" as FilterStatus, label: `Afwezig (${absent})`, activeStyle: attandancesStyles.filterButtonAbsent },
-        ] as const).map(({ key, label, activeStyle }) => (
+          { key: "all", label: `Alle (${courses.length})` },
+          { key: "present", label: `Aanwezig (${present})`, activeStyle: attandancesStyles.filterButtonPresent },
+          { key: "absent", label: `Afwezig (${absent})`, activeStyle: attandancesStyles.filterButtonAbsent },
+        ] satisfies FilterChip[]).map(({ key, label, activeStyle }) => (
           <TouchableOpacity
             key={key}
             style={[attandancesStyles.filterButton, cardStyle, filterStatus === key && attandancesStyles.filterButtonActive, filterStatus === key && activeStyle]}

@@ -4,7 +4,7 @@ import useSettings from "@/src/components/functional/settings/useSettings";
 import { useSoundEffects } from "@/src/components/functional/settings/useSoundEffects";
 import { useTheme } from "@/src/context/ThemeContext";
 import { settingstyles } from "@/src/style/settings.styling";
-import { Colors, FontSizes, Fonts, Spacing, getThemeColors } from "@/src/style/theme";
+import { Colors, getThemeColors } from "@/src/style/theme";
 import { formatName } from "@core/modules/profiles/utils.profiles";
 import Button from "@design/Button/Button";
 import AnimatedSwitch from "@design/Input/AnimatedSwitch";

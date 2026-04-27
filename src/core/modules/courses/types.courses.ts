@@ -7,5 +7,5 @@ export type CourseWithCampus = Course & {
     id: number;
     name: string;
     location: string;
-  };
+  } | null;
 };

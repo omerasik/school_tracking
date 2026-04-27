@@ -1,5 +1,5 @@
 import { Colors, Fonts, FontSizes, Spacing, BorderRadius } from "@style/theme";
-import { StyleSheet } from "react-native";
+import { StyleSheet, TextStyle, ViewStyle } from "react-native";
 
 const hairlineWidth = StyleSheet.hairlineWidth;
 
@@ -12,7 +12,7 @@ export const errorMessageStyles = {
     padding: Spacing.sm,
     borderRadius: Spacing.xs,
     marginBottom: Spacing.md,
-  },
+  } satisfies TextStyle,
 };
 
 export const buttonStyles = {
@@ -47,7 +47,7 @@ export const textButtonStyles = {
     fontSize: FontSizes.default,
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.md,
-  },
+  } satisfies TextStyle,
 };
 
 export const listItemStyles = {
@@ -58,7 +58,7 @@ export const listItemStyles = {
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.md,
     backgroundColor: Colors.white,
-  },
+  } satisfies ViewStyle,
   containerText: {
     flex: 1,
   },
@@ -83,7 +83,7 @@ export const dividerStyles = {
     width: "100%",
     height: hairlineWidth,
     backgroundColor: Colors.gray["200"],
-  },
+  } satisfies ViewStyle,
 };
 
 export const themedTextStyles = {

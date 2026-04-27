@@ -9,10 +9,10 @@ export const getQrs = async (): Promise<Qr[]> => {
   return Promise.resolve(data);
 };
 
-export const getQrById = async (uid: string): Promise<Qr | null> => {
+export const getQrById = async (id: number): Promise<Qr | null> => {
   const response = await API.from("qr_codes")
     .select("*")
-    .eq("id", uid)
+    .eq("id", id)
     .throwOnError()
     .single();
   return Promise.resolve(response.data);

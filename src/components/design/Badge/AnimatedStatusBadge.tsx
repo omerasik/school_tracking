@@ -34,7 +34,7 @@ const AnimatedStatusBadge: React.FC<AnimatedStatusBadgeProps> = ({
         useNativeDriver: true,
       }),
     ]).start();
-  }, [status]);
+  }, [colorAnim, scaleAnim, status]);
 
   const backgroundColor = colorAnim.interpolate({
     inputRange: [0, 1, 2],

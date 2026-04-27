@@ -55,7 +55,7 @@ const getSettingValue = async (key: string): Promise<boolean> => {
         : DEFAULT_SETTINGS.vibrationEnabled;
     }
     return value === "true";
-  } catch (error) {
+  } catch {
     return key === SETTINGS_KEYS.SOUND_ENABLED
       ? DEFAULT_SETTINGS.soundEnabled
       : DEFAULT_SETTINGS.vibrationEnabled;

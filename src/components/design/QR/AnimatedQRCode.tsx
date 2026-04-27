@@ -38,7 +38,7 @@ const AnimatedQRCode: React.FC<AnimatedQRCodeProps> = ({
     pulseAnimation.start();
 
     return () => pulseAnimation.stop();
-  }, []);
+  }, [pulseAnim]);
 
   useEffect(() => {
     // Reset and start countdown animation whenever value changes
@@ -53,7 +53,7 @@ const AnimatedQRCode: React.FC<AnimatedQRCodeProps> = ({
     countdownAnimation.start();
 
     return () => countdownAnimation.stop();
-  }, [value, refreshInterval]);
+  }, [progressAnim, refreshInterval, value]);
 
   // Animated width for progress bar
   const progressWidth = progressAnim.interpolate({

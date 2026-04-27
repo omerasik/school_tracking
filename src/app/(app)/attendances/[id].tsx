@@ -81,16 +81,13 @@ const AttendancesDetailLayout = () => {
       render={({ course, attendances }) => {
         const status = getCourseStatus(course, attendances);
         let statusIcon: any = "time-outline";
-        let statusColor = Colors.gray[400];
         let statusText = "Binnenkort";
 
         if (status === "present") {
           statusIcon = "checkmark-circle";
-          statusColor = Colors.success["500"];
           statusText = "Aanwezig";
         } else if (status === "absent") {
           statusIcon = "close-circle";
-          statusColor = Colors.error["500"];
           statusText = "Afwezig";
         }
 

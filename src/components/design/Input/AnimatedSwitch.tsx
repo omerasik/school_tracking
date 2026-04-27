@@ -32,7 +32,7 @@ const AnimatedSwitch: React.FC<AnimatedSwitchProps> = ({
         }),
       ]).start();
     }
-  }, [value]);
+  }, [bounceAnim, value]);
 
   const handleToggle = async (newValue: boolean) => {
     // Trigger haptic feedback

@@ -34,7 +34,7 @@ const SkeletonLoader: React.FC<SkeletonLoaderProps> = ({
     pulse.start();
 
     return () => pulse.stop();
-  }, []);
+  }, [pulseAnim]);
 
   const opacity = pulseAnim.interpolate({
     inputRange: [0, 1],
@@ -65,15 +65,15 @@ const styles = StyleSheet.create({
 
 export const AttendanceCardSkeleton: React.FC = () => {
   return (
-    <View style={styles.cardContainer}>
-      <View style={styles.cardHeader}>
+    <View style={cardStyles.cardContainer}>
+      <View style={cardStyles.cardHeader}>
         <SkeletonLoader width={24} height={24} borderRadius={12} />
-        <View style={styles.cardHeaderText}>
+        <View style={cardStyles.cardHeaderText}>
           <SkeletonLoader width="70%" height={16} />
           <SkeletonLoader width="50%" height={12} style={{ marginTop: 8 }} />
         </View>
       </View>
-      <View style={styles.cardDetails}>
+      <View style={cardStyles.cardDetails}>
         <SkeletonLoader width="40%" height={14} style={{ marginTop: 8 }} />
         <SkeletonLoader width="60%" height={14} style={{ marginTop: 8 }} />
       </View>
@@ -106,7 +106,5 @@ const cardStyles = StyleSheet.create({
     marginTop: 12,
   },
 });
-
-Object.assign(styles, cardStyles);
 
 export default SkeletonLoader;

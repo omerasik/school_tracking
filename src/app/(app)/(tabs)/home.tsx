@@ -40,7 +40,7 @@ const HomeScreen = () => {
   if (error) {
     return (
       <DefaultView>
-        <EmptyView title="Kon niet laden" description={error} icon="alert-circle" />
+        <EmptyView title="Kon niet laden" description={error} icon="error-outline" />
       </DefaultView>
     );
   }
@@ -120,7 +120,7 @@ const HomeScreen = () => {
 
       {today.length === 0 ? (
         <View style={{ paddingHorizontal: Spacing.lg }}>
-          <EmptyView title="Bugün ders yok" description="Bugün için planlanmış ders bulunamadı." icon="calendar" />
+          <EmptyView title="Bugün ders yok" description="Bugün için planlanmış ders bulunamadı." icon="calendar-today" />
         </View>
       ) : (
         <View style={{ paddingHorizontal: Spacing.lg, paddingBottom: Spacing.lg }}>

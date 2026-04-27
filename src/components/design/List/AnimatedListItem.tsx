@@ -30,7 +30,7 @@ const AnimatedListItem: React.FC<AnimatedListItemProps> = ({
         useNativeDriver: true,
       }),
     ]).start();
-  }, [index]);
+  }, [delay, fadeAnim, index, slideAnim]);
 
   return (
     <Animated.View

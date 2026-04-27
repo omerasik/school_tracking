@@ -91,7 +91,7 @@ const AuthGate = () => {
     } else if (isLoggedIn && inAuthGroup) {
       router.replace("/(app)/(tabs)/attendances");
     }
-  }, [isLoggedIn, segments, navigationState?.key]);
+  }, [isLoggedIn, segments, navigationState?.key, router]);
 
   return (
     <ThemeProvider value={Theme}>

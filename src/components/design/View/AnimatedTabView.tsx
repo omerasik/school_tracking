@@ -31,7 +31,7 @@ const AnimatedTabView: React.FC<AnimatedTabViewProps> = ({ children }) => {
         }),
       ]).start();
     }
-  }, [isFocused]);
+  }, [fadeAnim, isFocused, slideAnim]);
 
   return (
     <Animated.View

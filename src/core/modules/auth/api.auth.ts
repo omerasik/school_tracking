@@ -3,6 +3,7 @@ import { Auth, CreateUserBody, LoginBody } from "./types.auth";
 import {
   mapLegacyRoleToAppRoles,
   pickPrimaryRole,
+  type AppRole,
   type LegacyRole,
 } from "@core/domain/rbac";
 
@@ -28,7 +29,7 @@ export const getCurrentAuth = async (): Promise<Auth | null> => {
       const result = await API.auth.getSession();
       session = result.data?.session;
       error = result.error;
-    } catch (err: any) {
+    } catch {
       await API.auth.signOut().catch(() => {});
       return null;
     }
@@ -54,7 +55,7 @@ export const getCurrentAuth = async (): Promise<Auth | null> => {
     // Legacy compatibility: current schema exposes role {student, docent}.
     // New SaaS schema will provide app_roles via user_roles.
     const legacyRole = (profile as any).role as LegacyRole | undefined;
-    const appRoles = legacyRole ? mapLegacyRoleToAppRoles(legacyRole) : ["student"];
+    const appRoles: AppRole[] = legacyRole ? mapLegacyRoleToAppRoles(legacyRole) : ["student"];
     return {
       user: {
         email: user.email ?? "",
@@ -64,7 +65,7 @@ export const getCurrentAuth = async (): Promise<Auth | null> => {
       },
       session,
     };
-  } catch (error: any) {
+  } catch {
     await API.auth.signOut().catch(() => {});
     return null;
   }
