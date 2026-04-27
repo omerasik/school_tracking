@@ -1,0 +1,17 @@
+# Copy the values you need into your shell environment.
+# Keep this file secret-free.
+
+# Local Supabase defaults:
+SUPABASE_TEST_URL=http://127.0.0.1:54321
+SUPABASE_TEST_ANON_KEY=replace-with-local-anon-key
+SUPABASE_TEST_SERVICE_ROLE_KEY=replace-with-local-service-role-key
+
+# Edge Functions base URL. Defaults to ${SUPABASE_TEST_URL}/functions/v1.
+SUPABASE_FUNCTIONS_URL=http://127.0.0.1:54321/functions/v1
+
+# Test accounts are created or updated by seed-security-fixtures.mjs.
+SCHOOL_TRACKING_SECURITY_TEST_PASSWORD=School-Tracking-Security-Test-2026!
+
+# Required only for non-local staging projects.
+# Do not set this for production.
+SCHOOL_TRACKING_ALLOW_REMOTE_TESTS=no
