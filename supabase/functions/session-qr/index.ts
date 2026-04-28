@@ -1,5 +1,10 @@
 import { corsHeaders } from "../_shared/cors.ts";
 import { randomToken } from "../_shared/crypto.ts";
+import {
+  canOwnOrManageSession,
+  getActorContext,
+  logAudit,
+} from "../_shared/security.ts";
 import { getAuthorizationJwt, getSupabaseAdminClient } from "../_shared/supabase.ts";
 
 type Body = {
@@ -32,7 +37,10 @@ Deno.serve(async (req) => {
   const supabase = getSupabaseAdminClient();
   const { data: authData, error: authError } = await supabase.auth.getUser(jwt);
   if (authError || !authData?.user) return json(401, { error: "invalid_auth" });
-  const teacherId = authData.user.id;
+  const actorId = authData.user.id;
+
+  const actor = await getActorContext(supabase, actorId);
+  if (!actor) return json(403, { error: "forbidden" });
 
   const body = (await req.json().catch(() => null)) as Body | null;
   if (!body?.session_id) return json(400, { error: "missing_session_id" });
@@ -45,14 +53,47 @@ Deno.serve(async (req) => {
 
   const { data: session, error: sErr } = await supabase
     .from("attendance_sessions")
-    .select("id, tenant_id, school_id, teacher_id, status")
+    .select("id, tenant_id, school_id, teacher_id, status, ends_at")
     .eq("id", body.session_id)
     .single();
 
   if (sErr || !session) return json(404, { error: "session_not_found" });
-  if (session.teacher_id !== teacherId) return json(403, { error: "not_session_teacher" });
+  if (!canOwnOrManageSession(actor, session)) {
+    await logAudit(supabase, {
+      userId: actorId,
+      tenantId: session.tenant_id,
+      schoolId: session.school_id,
+      action: "session_qr_denied",
+      resourceType: "attendance_session",
+      resourceId: session.id,
+      reason: "role_or_ownership_forbidden",
+    });
+    return json(403, { error: "forbidden" });
+  }
   if (!["active", "grace"].includes(session.status)) {
+    await logAudit(supabase, {
+      userId: actorId,
+      tenantId: session.tenant_id,
+      schoolId: session.school_id,
+      action: "session_qr_denied",
+      resourceType: "attendance_session",
+      resourceId: session.id,
+      reason: "session_not_active",
+      metadata: { status: session.status },
+    });
     return json(409, { error: "session_not_active" });
+  }
+  if (new Date(session.ends_at).getTime() <= now.getTime()) {
+    await logAudit(supabase, {
+      userId: actorId,
+      tenantId: session.tenant_id,
+      schoolId: session.school_id,
+      action: "session_qr_denied",
+      resourceType: "attendance_session",
+      resourceId: session.id,
+      reason: "session_ended",
+    });
+    return json(409, { error: "session_ended" });
   }
 
   const { error: iErr } = await supabase.from("qr_tokens").insert({
@@ -64,6 +105,15 @@ Deno.serve(async (req) => {
     expires_at: expiresAt.toISOString(),
   });
   if (iErr) return json(500, { error: "token_create_failed" });
+  await logAudit(supabase, {
+    userId: actorId,
+    tenantId: session.tenant_id,
+    schoolId: session.school_id,
+    action: "session_qr_created",
+    resourceType: "attendance_session",
+    resourceId: session.id,
+    metadata: { ttl_seconds: ttl },
+  });
 
   // QR payload intentionally contains no PII.
   return json(200, {

@@ -1,4 +1,10 @@
 import { corsHeaders } from "../_shared/cors.ts";
+import {
+  canManageTenant,
+  getActorContext,
+  isTeacherLike,
+  logAudit,
+} from "../_shared/security.ts";
 import { getAuthorizationJwt, getSupabaseAdminClient } from "../_shared/supabase.ts";
 
 type Body = {
@@ -31,7 +37,21 @@ Deno.serve(async (req) => {
   const supabase = getSupabaseAdminClient();
   const { data: authData, error: authError } = await supabase.auth.getUser(jwt);
   if (authError || !authData?.user) return json(401, { error: "invalid_auth" });
-  const teacherId = authData.user.id;
+  const actorId = authData.user.id;
+
+  const actor = await getActorContext(supabase, actorId);
+  if (!actor) return json(403, { error: "forbidden" });
+  if (!isTeacherLike(actor) && !canManageTenant(actor, actor.tenant_id)) {
+    await logAudit(supabase, {
+      userId: actorId,
+      tenantId: actor.tenant_id,
+      schoolId: actor.school_id,
+      action: "session_start_denied",
+      resourceType: "attendance_session",
+      reason: "role_forbidden",
+    });
+    return json(403, { error: "forbidden" });
+  }
 
   const body = (await req.json().catch(() => null)) as Body | null;
   if (!body) return json(400, { error: "invalid_json" });
@@ -56,7 +76,21 @@ Deno.serve(async (req) => {
       .eq("id", timetableEntryId)
       .single();
     if (teError || !te) return json(404, { error: "timetable_entry_not_found" });
-    if (te.teacher_id !== teacherId) return json(403, { error: "not_teacher_of_entry" });
+    const canStartEntry =
+      (isTeacherLike(actor) && te.teacher_id === actorId) ||
+      canManageTenant(actor, te.tenant_id);
+    if (!canStartEntry) {
+      await logAudit(supabase, {
+        userId: actorId,
+        tenantId: te.tenant_id,
+        schoolId: te.school_id,
+        action: "session_start_denied",
+        resourceType: "timetable_entry",
+        resourceId: te.id,
+        reason: "ownership_forbidden",
+      });
+      return json(403, { error: "forbidden" });
+    }
     tenantId = te.tenant_id;
     schoolId = te.school_id;
     campusId = te.campus_id;
@@ -70,34 +104,128 @@ Deno.serve(async (req) => {
   if (!endsAt || isNaN(endsAt.getTime())) endsAt = addMinutes(startsAt, presentGrace + lateGrace + 60);
   if (!courseId) return json(400, { error: "missing_course_id" });
 
+  const { data: course, error: courseError } = await supabase
+    .from("courses")
+    .select("id, tenant_id, school_id")
+    .eq("id", courseId)
+    .single();
+  if (courseError || !course) return json(404, { error: "course_not_found" });
+
+  if (!tenantId) tenantId = course.tenant_id;
+  if (!schoolId) schoolId = course.school_id;
+
+  if (tenantId !== course.tenant_id || schoolId !== course.school_id) {
+    await logAudit(supabase, {
+      userId: actorId,
+      tenantId,
+      schoolId,
+      action: "session_start_denied",
+      resourceType: "course",
+      resourceId: course.id,
+      reason: "tenant_mismatch",
+      metadata: { course_tenant_id: course.tenant_id },
+    });
+    return json(403, { error: "forbidden" });
+  }
+
+  if (isTeacherLike(actor) && !canManageTenant(actor, tenantId)) {
+    const { data: entries } = await supabase
+      .from("timetable_entries")
+      .select("id, campus_id, room_id, starts_at, ends_at")
+      .eq("course_id", courseId)
+      .eq("teacher_id", actorId)
+      .eq("tenant_id", tenantId)
+      .lte("starts_at", endsAt.toISOString())
+      .gte("ends_at", startsAt.toISOString())
+      .limit(2);
+
+    if (!entries || entries.length === 0) {
+      await logAudit(supabase, {
+        userId: actorId,
+        tenantId,
+        schoolId,
+        action: "session_start_denied",
+        resourceType: "course",
+        resourceId: courseId,
+        reason: "teacher_course_ownership_forbidden",
+      });
+      return json(403, { error: "forbidden" });
+    }
+    if (!timetableEntryId && entries.length > 1) {
+      await logAudit(supabase, {
+        userId: actorId,
+        tenantId,
+        schoolId,
+        action: "session_start_denied",
+        resourceType: "course",
+        resourceId: courseId,
+        reason: "ambiguous_timetable_entry",
+      });
+      return json(409, { error: "ambiguous_timetable_entry" });
+    }
+    const entry = entries[0];
+    timetableEntryId = timetableEntryId ?? entry.id;
+    campusId = campusId ?? entry.campus_id;
+    roomId = roomId ?? entry.room_id;
+    startsAt = body.starts_at ? startsAt : new Date(entry.starts_at);
+    endsAt = body.ends_at ? endsAt : new Date(entry.ends_at);
+  }
+
+  if (!canManageTenant(actor, tenantId) && !(isTeacherLike(actor) && actor.tenant_id === tenantId)) {
+    await logAudit(supabase, {
+      userId: actorId,
+      tenantId,
+      schoolId,
+      action: "session_start_denied",
+      resourceType: "course",
+      resourceId: courseId,
+      reason: "cross_tenant_forbidden",
+    });
+    return json(403, { error: "forbidden" });
+  }
+
   // Resolve tenant/school from teacher profile when not given by timetable
   if (!tenantId || !schoolId) {
-    const { data: profile, error: pError } = await supabase
-      .from("profiles")
-      .select("tenant_id, school_id")
-      .eq("id", teacherId)
-      .single();
-    if (pError || !profile?.tenant_id || !profile?.school_id) {
+    if (!actor.tenant_id || !actor.school_id) {
       return json(400, { error: "teacher_profile_missing_tenant" });
     }
-    tenantId = tenantId ?? profile.tenant_id;
-    schoolId = schoolId ?? profile.school_id;
+    tenantId = tenantId ?? actor.tenant_id;
+    schoolId = schoolId ?? actor.school_id;
   }
+
+  if (!startsAt || isNaN(startsAt.getTime()) || !endsAt || isNaN(endsAt.getTime())) {
+    return json(400, { error: "invalid_session_time" });
+  }
+  if (endsAt.getTime() <= startsAt.getTime()) return json(400, { error: "invalid_session_time" });
 
   const gracePresentUntil = addMinutes(startsAt, presentGrace);
   const graceLateUntil = addMinutes(gracePresentUntil, lateGrace);
 
   // Ensure only one active session per teacher+course overlapping time window
-  const { data: existing } = await supabase
+  const { data: existingSessions } = await supabase
     .from("attendance_sessions")
     .select("id, status")
-    .eq("teacher_id", teacherId)
+    .eq("teacher_id", actorId)
     .eq("course_id", courseId)
     .in("status", ["draft", "active", "grace"])
     .gte("ends_at", startsAt.toISOString())
     .lte("starts_at", endsAt.toISOString())
-    .maybeSingle();
+    .limit(2);
 
+  if (existingSessions && existingSessions.length > 1) {
+    await logAudit(supabase, {
+      userId: actorId,
+      tenantId,
+      schoolId,
+      action: "session_start_denied",
+      resourceType: "attendance_session",
+      reason: "ambiguous_existing_session",
+      metadata: { course_id: courseId },
+    });
+    return json(409, { error: "ambiguous_existing_session" });
+  }
+
+  const existing = existingSessions?.[0] ?? null;
   if (existing?.id) {
     const { data: updated, error: uError } = await supabase
       .from("attendance_sessions")
@@ -122,7 +250,7 @@ Deno.serve(async (req) => {
       school_id: schoolId,
       timetable_entry_id: timetableEntryId,
       course_id: courseId,
-      teacher_id: teacherId,
+      teacher_id: actorId,
       campus_id: campusId,
       room_id: roomId,
       status: "active",
@@ -139,6 +267,15 @@ Deno.serve(async (req) => {
     .single();
 
   if (cError || !created) return json(500, { error: "session_create_failed" });
+  await logAudit(supabase, {
+    userId: actorId,
+    tenantId,
+    schoolId,
+    action: "session_start_success",
+    resourceType: "attendance_session",
+    resourceId: created.id,
+    metadata: { course_id: courseId, timetable_entry_id: timetableEntryId },
+  });
   return json(200, { session: created, reused: false });
 });
 

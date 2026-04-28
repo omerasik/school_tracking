@@ -36,6 +36,14 @@ const USERS = {
     roles: ["teacher"],
     tenant: "b",
   },
+  studentB: {
+    email: "school-tracking.security.student.b@example.com",
+    firstName: "Security",
+    lastName: "Student B",
+    legacyRole: "student",
+    roles: ["student"],
+    tenant: "b",
+  },
   adminA: {
     email: "school-tracking.security.admin.a@example.com",
     firstName: "Security",
@@ -181,6 +189,7 @@ async function seedSaas(supabase, usersByKey) {
     teacherA: [tenantA, schoolA],
     adminA: [tenantA, schoolA],
     superAdmin: [tenantA, schoolA],
+    studentB: [tenantB, schoolB],
     teacherB: [tenantB, schoolB],
     adminB: [tenantB, schoolB],
   };
@@ -221,6 +230,40 @@ async function seedSaas(supabase, usersByKey) {
       .single()
   );
 
+  const timetableA = await must(
+    "teacher A timetable entry",
+    supabase
+      .from("timetable_entries")
+      .insert({
+        tenant_id: tenantA.id,
+        school_id: schoolA.id,
+        course_id: courseA.id,
+        teacher_id: usersByKey.teacherA.id,
+        campus_id: campusA.id,
+        starts_at: nowIso(-10 * 60_000),
+        ends_at: nowIso(90 * 60_000),
+      })
+      .select("*")
+      .single()
+  );
+
+  const timetableB = await must(
+    "teacher B timetable entry",
+    supabase
+      .from("timetable_entries")
+      .insert({
+        tenant_id: tenantB.id,
+        school_id: schoolB.id,
+        course_id: courseB.id,
+        teacher_id: usersByKey.teacherB.id,
+        campus_id: campusB.id,
+        starts_at: nowIso(-10 * 60_000),
+        ends_at: nowIso(90 * 60_000),
+      })
+      .select("*")
+      .single()
+  );
+
   await must(
     "student enrollment",
     supabase.from("course_enrollments").insert({
@@ -228,6 +271,15 @@ async function seedSaas(supabase, usersByKey) {
       school_id: schoolA.id,
       course_id: courseA.id,
       student_id: usersByKey.studentA.id,
+      })
+  );
+  await must(
+    "student B enrollment",
+    supabase.from("course_enrollments").insert({
+      tenant_id: tenantB.id,
+      school_id: schoolB.id,
+      course_id: courseB.id,
+      student_id: usersByKey.studentB.id,
     })
   );
 
@@ -315,7 +367,7 @@ async function seedSaas(supabase, usersByKey) {
         tenant_id: tenantB.id,
         school_id: schoolB.id,
         session_id: otherTenantSession.id,
-        student_id: usersByKey.teacherB.id,
+        student_id: usersByKey.studentB.id,
         status: "present",
         source: "security_seed",
         checked_in_at: nowIso(),
@@ -342,6 +394,7 @@ async function seedSaas(supabase, usersByKey) {
     schools: { a: schoolA.id, b: schoolB.id },
     campuses: { a: campusA.id, b: campusB.id },
     courses: { a: courseA.id, b: courseB.id },
+    timetableEntries: { a: timetableA.id, b: timetableB.id },
     sessions: {
       active: activeSession.id,
       finalized: finalizedSession.id,

@@ -29,20 +29,37 @@ async function createQrToken(supabase, fixtures, label, offsetMs = 60_000) {
   return raw;
 }
 
-async function callSessionQr(env, fixtures, teacherJwt) {
+async function expectTokenUsed(supabase, rawToken, expected, label) {
+  const { data, error } = await supabase
+    .from("qr_tokens")
+    .select("used_at")
+    .eq("jti", sha256Hex(rawToken))
+    .single();
+  if (error) throw new Error(`${label}: token lookup failed: ${error.message}`);
+  const used = Boolean(data.used_at);
+  if (used !== expected) {
+    throw new Error(`${label}: expected token used=${expected}, got ${used}`);
+  }
+}
+
+async function callSessionStart(env, jwt, body) {
+  return fetchJson(`${env.functionsUrl}/session-start`, { jwt, body });
+}
+
+async function callSessionQr(env, sessionId, jwt) {
   return fetchJson(`${env.functionsUrl}/session-qr`, {
-    jwt: teacherJwt,
-    body: { session_id: fixtures.saas.sessions.active, ttl_seconds: 60 },
+    jwt,
+    body: { session_id: sessionId, ttl_seconds: 60 },
   });
 }
 
-async function callCheckin(env, jwt, token, deviceId = "security-api-test") {
+async function callCheckin(env, jwt, token, deviceId = "security-api-test", location = { lat: 51.03889, lon: 3.69167, accuracy_m: 8 }) {
   return fetchJson(`${env.functionsUrl}/attendance-checkin`, {
     jwt,
     body: {
       token,
       device_id: deviceId,
-      location: { lat: 51.03889, lon: 3.69167, accuracy_m: 8 },
+      ...(location === undefined ? {} : { location }),
     },
   });
 }
@@ -53,18 +70,67 @@ async function runSaasEdgeTests(env, fixtures, supabase, sessions) {
     return;
   }
 
-  const generated = await callSessionQr(env, fixtures, sessions.teacherA.jwt);
+  const studentStart = await callSessionStart(env, sessions.studentA.jwt, {
+    course_id: fixtures.saas.courses.a,
+    starts_at: nowIso(-60_000),
+    ends_at: nowIso(30 * 60_000),
+  });
+  expectResult(studentStart, 403, "forbidden", "student cannot start session");
+
+  const teacherStart = await callSessionStart(env, sessions.teacherA.jwt, {
+    timetable_entry_id: fixtures.saas.timetableEntries.a,
+  });
+  expectResult(teacherStart, 200, null, "teacher can start own session");
+
+  const otherTeacherStart = await callSessionStart(env, sessions.teacherA.jwt, {
+    timetable_entry_id: fixtures.saas.timetableEntries.b,
+  });
+  expectResult(otherTeacherStart, 403, "forbidden", "teacher cannot start another teacher session");
+
+  const studentQr = await callSessionQr(env, fixtures.saas.sessions.active, sessions.studentA.jwt);
+  expectResult(studentQr, 403, "forbidden", "student cannot generate session QR");
+
+  const generated = await callSessionQr(env, fixtures.saas.sessions.active, sessions.teacherA.jwt);
   expectResult(generated, 200, null, "teacher can generate session QR");
+
+  const otherTeacherQr = await callSessionQr(env, fixtures.saas.sessions.otherTenant, sessions.teacherA.jwt);
+  expectResult(otherTeacherQr, 403, "forbidden", "teacher cannot generate QR for another teacher session");
+
+  const finalizedQr = await callSessionQr(env, fixtures.saas.sessions.finalized, sessions.teacherA.jwt);
+  expectResult(finalizedQr, 409, "session_not_active", "finalized session cannot generate QR");
 
   const once = await callCheckin(env, sessions.studentA.jwt, generated.body.token, "security-api-once");
   expectResult(once, 200, null, "first token consume succeeds");
+  await expectTokenUsed(supabase, generated.body.token, true, "valid token is consumed");
 
   const twice = await callCheckin(env, sessions.studentA.jwt, generated.body.token, "security-api-twice");
   expectResult(twice, 409, "token_already_used", "second token consume is rejected");
 
+  const crossTenantToken = await createQrToken(supabase, fixtures, "cross-tenant");
+  const crossTenantResult = await callCheckin(env, sessions.studentB.jwt, crossTenantToken, "security-api-cross-tenant");
+  expectResult(crossTenantResult, 403, "forbidden", "cross-tenant student cannot burn valid token");
+  await expectTokenUsed(supabase, crossTenantToken, false, "cross-tenant rejected token remains unused");
+
+  const missingLocationToken = await createQrToken(supabase, fixtures, "missing-location");
+  const missingLocationResult = await callCheckin(env, sessions.studentA.jwt, missingLocationToken, "security-api-missing-location", undefined);
+  expectResult(missingLocationResult, 400, "missing_location", "missing required location is rejected");
+  await expectTokenUsed(supabase, missingLocationToken, false, "missing-location token remains unused");
+
+  const outsideLocationToken = await createQrToken(supabase, fixtures, "outside-location");
+  const outsideLocationResult = await callCheckin(
+    env,
+    sessions.studentA.jwt,
+    outsideLocationToken,
+    "security-api-outside-location",
+    { lat: 0, lon: 0, accuracy_m: 8 }
+  );
+  expectResult(outsideLocationResult, 403, "outside_location", "outside location is rejected");
+  await expectTokenUsed(supabase, outsideLocationToken, false, "outside-location token remains unused");
+
   const expired = await createQrToken(supabase, fixtures, "expired", -60_000);
   const expiredResult = await callCheckin(env, sessions.studentA.jwt, expired, "security-api-expired");
   expectResult(expiredResult, 410, "token_expired", "expired token is rejected");
+  await expectTokenUsed(supabase, expired, false, "expired token remains unused");
 
   const invalidResult = await callCheckin(env, sessions.studentA.jwt, randomToken("invalid"), "security-api-invalid");
   expectResult(invalidResult, 404, "token_not_found", "invalid token is rejected");
@@ -181,7 +247,9 @@ async function main() {
   const supabase = adminClient(env);
   const sessions = {
     studentA: await signIn(env, fixtures.users.studentA.email),
+    studentB: await signIn(env, fixtures.users.studentB.email),
     teacherA: await signIn(env, fixtures.users.teacherA.email),
+    teacherB: await signIn(env, fixtures.users.teacherB.email),
   };
 
   await runPrototypeTests(env, fixtures, supabase, sessions);

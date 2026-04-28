@@ -1,4 +1,5 @@
 import { corsHeaders } from "../_shared/cors.ts";
+import { getActorContext, logAudit } from "../_shared/security.ts";
 import { getAuthorizationJwt, getSupabaseAdminClient } from "../_shared/supabase.ts";
 
 type Body = {
@@ -24,35 +25,6 @@ async function sha256Hex(value: string) {
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-}
-
-async function logAudit(
-  supabase: ReturnType<typeof getSupabaseAdminClient>,
-  params: {
-    userId: string;
-    tenantId?: string | null;
-    schoolId?: string | null;
-    action: string;
-    resourceType: string;
-    resourceId?: string | null;
-    reason?: string | null;
-    metadata?: Record<string, unknown>;
-  }
-) {
-  try {
-    await supabase.from("audit_logs").insert({
-      tenant_id: params.tenantId ?? null,
-      school_id: params.schoolId ?? null,
-      actor_user_id: params.userId,
-      action: params.action,
-      resource_type: params.resourceType,
-      resource_id: params.resourceId ?? null,
-      reason: params.reason ?? null,
-      metadata: params.metadata ?? {},
-    });
-  } catch {
-    // no-op: never block attendance flow on logging
-  }
 }
 
 function distanceMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -89,6 +61,8 @@ Deno.serve(async (req) => {
   const { data: authData, error: authError } = await supabase.auth.getUser(jwt);
   if (authError || !authData?.user) return json(401, { error: "invalid_auth" });
   const studentId = authData.user.id;
+  const actor = await getActorContext(supabase, studentId);
+  if (!actor) return json(403, { error: "forbidden" });
 
   const body = (await req.json().catch(() => null)) as Body | null;
   if (!body?.token) return json(400, { error: "missing_token" });
@@ -96,67 +70,52 @@ Deno.serve(async (req) => {
   const now = new Date();
   const tokenHash = await sha256Hex(body.token);
 
-  // 1) Atomically consume token (single-use + non-expired).
-  const { data: tokenRow, error: consumeErr } = await supabase
+  // 1) Read token first. Do not consume until every authorization check passes.
+  const { data: tokenRow } = await supabase
     .from("qr_tokens")
-    .update({
-      used_at: now.toISOString(),
-      used_by_user: studentId,
-      used_by_device_id: body.device_id ?? null,
-    })
-    .eq("jti", tokenHash)
-    .is("used_at", null)
-    .gt("expires_at", now.toISOString())
     .select("id, tenant_id, school_id, session_id, expires_at, used_at")
-    .single();
+    .eq("jti", tokenHash)
+    .maybeSingle();
 
-  if (consumeErr || !tokenRow) {
-    const { data: anyToken } = await supabase
-      .from("qr_tokens")
-      .select("id, tenant_id, school_id, session_id, expires_at, used_at")
-      .eq("jti", tokenHash)
-      .maybeSingle();
+  if (!tokenRow) {
+    await logAudit(supabase, {
+      userId: studentId,
+      tenantId: actor.tenant_id,
+      schoolId: actor.school_id,
+      action: "invalid_token_attempt",
+      resourceType: "qr_token",
+      reason: "invalid_token",
+      metadata: { checkin_method: "student_scan" },
+    });
+    return json(404, { error: "token_not_found" });
+  }
 
-    if (!anyToken) {
-      await logAudit(supabase, {
-        userId: studentId,
-        action: "invalid_token_attempt",
-        resourceType: "qr_token",
-        reason: "invalid_token",
-        metadata: { checkin_method: "student_scan" },
-      });
-      return json(404, { error: "token_not_found" });
-    }
+  if (tokenRow.used_at) {
+    await logAudit(supabase, {
+      userId: studentId,
+      tenantId: tokenRow.tenant_id,
+      schoolId: tokenRow.school_id,
+      action: "reused_token_attempt",
+      resourceType: "qr_token",
+      resourceId: tokenRow.id,
+      reason: "token_reused",
+      metadata: { session_id: tokenRow.session_id },
+    });
+    return json(409, { error: "token_already_used" });
+  }
 
-    if (anyToken.used_at) {
-      await logAudit(supabase, {
-        userId: studentId,
-        tenantId: anyToken.tenant_id,
-        schoolId: anyToken.school_id,
-        action: "reused_token_attempt",
-        resourceType: "qr_token",
-        resourceId: anyToken.id,
-        reason: "token_reused",
-        metadata: { session_id: anyToken.session_id },
-      });
-      return json(409, { error: "token_already_used" });
-    }
-
-    if (new Date(anyToken.expires_at).getTime() <= now.getTime()) {
-      await logAudit(supabase, {
-        userId: studentId,
-        tenantId: anyToken.tenant_id,
-        schoolId: anyToken.school_id,
-        action: "expired_token_attempt",
-        resourceType: "qr_token",
-        resourceId: anyToken.id,
-        reason: "token_expired",
-        metadata: { session_id: anyToken.session_id },
-      });
-      return json(410, { error: "token_expired" });
-    }
-
-    return json(409, { error: "token_not_usable" });
+  if (new Date(tokenRow.expires_at).getTime() <= now.getTime()) {
+    await logAudit(supabase, {
+      userId: studentId,
+      tenantId: tokenRow.tenant_id,
+      schoolId: tokenRow.school_id,
+      action: "expired_token_attempt",
+      resourceType: "qr_token",
+      resourceId: tokenRow.id,
+      reason: "token_expired",
+      metadata: { session_id: tokenRow.session_id },
+    });
+    return json(410, { error: "token_expired" });
   }
 
   const { data: session, error: sErr } = await supabase
@@ -166,8 +125,43 @@ Deno.serve(async (req) => {
     .single();
 
   if (sErr || !session) return json(404, { error: "session_not_found" });
-  if (!["active", "grace"].includes(session.status)) return json(409, { error: "session_not_active" });
-  if (new Date(session.ends_at).getTime() < now.getTime()) return json(409, { error: "session_ended" });
+  if (!["active", "grace"].includes(session.status)) {
+    await logAudit(supabase, {
+      userId: studentId,
+      tenantId: session.tenant_id,
+      schoolId: session.school_id,
+      action: "checkin_denied",
+      resourceType: "attendance_session",
+      resourceId: session.id,
+      reason: "session_not_active",
+      metadata: { status: session.status },
+    });
+    return json(409, { error: "session_not_active" });
+  }
+  if (new Date(session.ends_at).getTime() < now.getTime()) {
+    await logAudit(supabase, {
+      userId: studentId,
+      tenantId: session.tenant_id,
+      schoolId: session.school_id,
+      action: "checkin_denied",
+      resourceType: "attendance_session",
+      resourceId: session.id,
+      reason: "session_ended",
+    });
+    return json(409, { error: "session_ended" });
+  }
+  if (actor.tenant_id !== session.tenant_id || actor.school_id !== session.school_id) {
+    await logAudit(supabase, {
+      userId: studentId,
+      tenantId: session.tenant_id,
+      schoolId: session.school_id,
+      action: "checkin_denied",
+      resourceType: "attendance_session",
+      resourceId: session.id,
+      reason: "cross_tenant_forbidden",
+    });
+    return json(403, { error: "forbidden" });
+  }
 
   // 2) Enrollment check (student must be enrolled)
   const { data: enrollment } = await supabase
@@ -176,25 +170,48 @@ Deno.serve(async (req) => {
     .eq("course_id", session.course_id)
     .eq("student_id", studentId)
     .maybeSingle();
-  if (!enrollment) return json(403, { error: "not_enrolled" });
+  if (!enrollment) {
+    await logAudit(supabase, {
+      userId: studentId,
+      tenantId: session.tenant_id,
+      schoolId: session.school_id,
+      action: "checkin_denied",
+      resourceType: "attendance_session",
+      resourceId: session.id,
+      reason: "not_enrolled",
+    });
+    return json(403, { error: "not_enrolled" });
+  }
 
-  // 3) Location check (optional but recommended)
+  // 3) Location check. A session with a campus that has coordinates requires location.
   let locationResult: Record<string, unknown> = { required: false };
   let status = resolveStatus(now, session);
-  if (session.campus_id && body.location) {
+  if (session.campus_id) {
     const { data: campus } = await supabase
       .from("campuses")
       .select("latitude, longitude, geofence_radius_m")
       .eq("id", session.campus_id)
       .maybeSingle();
 
-    if (campus?.latitude && campus?.longitude) {
+    if (campus?.latitude != null && campus?.longitude != null) {
+      if (!body.location) {
+        locationResult = { required: true, ok: false, reason: "missing_location" };
+        await logAudit(supabase, {
+          userId: studentId,
+          tenantId: session.tenant_id,
+          schoolId: session.school_id,
+          action: "missing_location_attempt",
+          resourceType: "attendance_session",
+          resourceId: session.id,
+          reason: "missing_location",
+        });
+        return json(400, { error: "missing_location" });
+      }
       const dist = distanceMeters(body.location.lat, body.location.lon, campus.latitude, campus.longitude);
       const radius = campus.geofence_radius_m ?? 250;
       const ok = dist <= radius;
       locationResult = { required: true, ok, distance_m: Math.round(dist), radius_m: radius };
       if (!ok) {
-        status = "outside_location";
         await logAudit(supabase, {
           userId: studentId,
           tenantId: session.tenant_id,
@@ -205,34 +222,37 @@ Deno.serve(async (req) => {
           reason: "outside_location",
           metadata: locationResult,
         });
+        return json(403, { error: "outside_location" });
       }
     }
   }
 
-  // 4) Upsert attendance record
-  const { data: record, error: rErr } = await supabase
-    .from("attendance_records")
-    .upsert(
-      {
-        tenant_id: session.tenant_id,
-        school_id: session.school_id,
-        session_id: session.id,
-        student_id: studentId,
-        status,
-        source: "student_scan",
-        checked_in_at: now.toISOString(),
-        location_lat: body.location?.lat ?? null,
-        location_lon: body.location?.lon ?? null,
-        location_accuracy_m: body.location?.accuracy_m ?? null,
-        location_result: locationResult,
-        device_id: body.device_id ?? null,
-        updated_at: now.toISOString(),
-      },
-      { onConflict: "session_id,student_id" }
-    )
-    .select("*")
-    .single();
-  if (rErr || !record) return json(500, { error: "record_upsert_failed" });
+  // 4) Atomically consume token and write attendance in one DB transaction.
+  const { data: record, error: consumeErr } = await supabase.rpc(
+    "consume_qr_token_for_checkin",
+    {
+      p_token_id: tokenRow.id,
+      p_student_id: studentId,
+      p_device_id: body.device_id ?? null,
+      p_status: status,
+      p_location_lat: body.location?.lat ?? null,
+      p_location_lon: body.location?.lon ?? null,
+      p_location_accuracy_m: body.location?.accuracy_m ?? null,
+      p_location_result: locationResult,
+    }
+  );
+  if (consumeErr || !record) {
+    const { data: latestToken } = await supabase
+      .from("qr_tokens")
+      .select("used_at, expires_at")
+      .eq("id", tokenRow.id)
+      .maybeSingle();
+    if (latestToken?.used_at) return json(409, { error: "token_already_used" });
+    if (latestToken && new Date(latestToken.expires_at).getTime() <= Date.now()) {
+      return json(410, { error: "token_expired" });
+    }
+    return json(409, { error: "token_not_usable" });
+  }
   await logAudit(supabase, {
     userId: studentId,
     tenantId: session.tenant_id,
